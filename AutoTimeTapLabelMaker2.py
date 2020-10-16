@@ -11,7 +11,6 @@ import sqlite3
 import sys
 import threading
 
-
 with open('config.yaml') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
     key = str(config['key'])
@@ -24,21 +23,20 @@ if config.get('printer'):
     printer_com.SelectPrinter(config.get('printer'))
 else:
     printer_com.SelectPrinter(printer_com.GetCurrentPrinterName())
-    pass
 printer_com.Open(barcode_path)
 printer_label = Dispatch('Dymo.DymoLabels')
 
 
 # Define Appointment Record type
-class Appointment(namedtuple('Appointment', 'calendarId status subStatus emailAddress fullName dateOfBirth')):
+class Appointment(namedtuple('Appointment', 'calendarId status subStatus emailAddress fullName dateOfBirth, printed')):
     @classmethod
     def convert_dateOfBirth(self, dateOfBirth: str) -> str:
         _ = dateOfBirth.split('-')  # Split the date of birth.
         return f'{_[1]}{_[-1]}{_[0][-2:]}'  # MMDDYY
 
     @classmethod
-    def from_sqlite(cls, calendarId, status, subStatus, emailAddress, fullName, dateOfBirth):
-        return cls(calendarId, status, subStatus, emailAddress, fullName, dateOfBirth)
+    def from_sqlite(cls, calendarId, status, subStatus, emailAddress, fullName, dateOfBirth, printed):
+        return cls(calendarId, status, subStatus, emailAddress, fullName, dateOfBirth, printed)
 
     @classmethod
     def from_dict(cls, d: dict):
@@ -48,8 +46,9 @@ class Appointment(namedtuple('Appointment', 'calendarId status subStatus emailAd
             'subStatus': d['subStatus'],
             'emailAddress': d['client']['emailAddress'],
             'fullName': d['client']['fullName'],
-            'dateOfBirth': Appointment.convert_dateOfBirth(d['client']['dateOfBirth'])
+            'dateOfBirth': Appointment.convert_dateOfBirth(d['client']['dateOfBirth']),
         }
+        apt.update({'printed': 0})
         return cls(**apt)
 
     # Define row factory
@@ -75,11 +74,56 @@ def cleanup_db(client: timetappy.Client, conn: sqlite3.Connection):
         return
 
 
+# Print labels
+def print_labels(event_values):
+    num_names_print = 0
+    num_email_print = 0
+    if event_values['ONE']:
+        num_names_print = 1
+    if event_values['TWO']:
+        num_names_print = 2
+    if event_values['THREE']:
+        num_names_print = 3
+    if event_values['EONE']:
+        num_email_print = 1
+    if event_values['ETWO']:
+        num_email_print = 2
+    if event_values['ETHREE']:
+        num_email_print = 3
+    if(printer_com.IsPrinterOnline(printer_com.GetCurrentPrinterName())):
+        print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Printing labels to {printer_com.GetCurrentPrinterName()}')
+        # Get all rows from database.
+        rows = cursor.execute("SELECT * FROM appointments ORDER BY emailAddress").fetchall()
+        for row in rows:
+            if row.subStatus == 'CHECKEDIN':
+                if row.printed == 0:
+                    printer_label.SetField('Barcode', f'{row.fullName}\n{row.dateOfBirth}')
+                    printer_label.SetField('Text', f'{row.fullName}\n{row.dateOfBirth}')
+
+                    printer_com.StartPrintJob()
+                    printer_com.Print(num_names_print, False)
+                    printer_com.EndPrintJob()
+
+                    printer_label.SetField('Barcode', f'{row.emailAddress}')
+                    printer_label.SetField('Text', f'{row.emailAddress}')
+
+                    printer_com.StartPrintJob()
+                    printer_com.Print(num_email_print, False)
+                    printer_com.EndPrintJob()
+                    # Update the appointment to show we've already printed it.
+                    cursor.execute("UPDATE appointments SET printed = ? WHERE calendarId = ?", (1, row.calendarId))
+        print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Finished printing labels.')
+    else:
+        print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Printer Offline: {printer_com.GetCurrentPrinterName()}')
+
+
 # Define window layout
 layout = [
     [sg.Text('Print Appointment Client Labels')],
     [sg.MLine(size=(80, 5), k='-ML-', reroute_stdout=True, write_only=True, autoscroll=True, auto_refresh=True)],
-    [sg.Button('Manual Sync'), sg.Button('Print Labels')],
+    [sg.Radio('Print one name label', 1, default=True, key='ONE'), sg.Radio('Print two name labels', 1, key='TWO'), sg.Radio('Print three name labels', 1, key='THREE')],
+    [sg.Radio('Print one email label', 2, default=True, key='EONE'), sg.Radio('Print two email labels', 2, key='ETWO'), sg.Radio('Print three email labels', 2, key='ETHREE')],
+    [sg.Button('Sync'), sg.Button('Print Labels')],
 ]
 
 
@@ -87,7 +131,6 @@ if __name__ == "__main__":
     # Create app window
     window = sg.Window(title='Automatic Appointment Label Printer', layout=layout)
     # Define timeout for app
-    timeout = thread = None
     # Get TimeTap API key and secret from environment variables
     # Initialize TimeTap API Client
     client = timetappy.Client(APIKey=key, PrivateKey=secret)
@@ -98,9 +141,10 @@ if __name__ == "__main__":
     # Open a cursor
     cursor = conn.cursor()
     # Create table "Appointments"
-    cursor.execute("CREATE TABLE appointments (calendarId INTEGER, status TEXT, subStatus TEXT, emailAddress TEXT, fullName TEXT, dateOfBirth TEXT)")
+    cursor.execute("CREATE TABLE appointments (calendarId INTEGER, status TEXT, subStatus TEXT, emailAddress TEXT, fullName TEXT, dateOfBirth TEXT, printed INTEGER)")
+    event, values = window.read()
     while True:
-        event, values = window.read(timeout=3000)
+        event, values = window.read(timeout=5000)
         # End the program if the users closes the window
         if event == sg.WIN_CLOSED:
             cursor.close()
@@ -108,7 +152,7 @@ if __name__ == "__main__":
             window.close()
             sys.exit()
         # User clicked sync or 3 seconds without input passed.
-        if event == 'Manual Sync' or event == sg.TIMEOUT_KEY:
+        if event == 'Sync' or event == sg.TIMEOUT_KEY:
             # Get all appointments
             appointments = client.get_appointments_report(statusList=['OPEN'], pageSize=99999)
             print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Checking TimeTap for latest appointments...')
@@ -127,33 +171,13 @@ if __name__ == "__main__":
                         )
                 else:
                     cursor.execute(
-                        "INSERT INTO appointments VALUES (?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO appointments VALUES (?, ?, ?, ?, ?, ?, ?)",
                         Appointment.from_dict(a)
                     )
             # Delete unneeded appointments
             if threading.active_count() < 3:  # Only if we don't already have a thread running.
                 thread = threading.Thread(target=cleanup_db, args=(client, conn), daemon=True)
                 thread.start()
+            print_labels(values)
         if event == 'Print Labels':
-            # Print out data to text for looking at data
-            if(printer_com.IsPrinterOnline(printer_com.GetCurrentPrinterName())):
-                print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Printing labels to {printer_com.GetCurrentPrinterName()}')
-                rows = cursor.execute("SELECT * FROM appointments ORDER BY emailAddress").fetchall()
-                for row in rows:
-                    if row.subStatus == 'CHECKEDIN':
-                        printer_label.SetField('Barcode', f'{row.fullName}\n{row.dateOfBirth}')
-                        printer_label.SetField('Text', f'{row.fullName}\n{row.dateOfBirth}')
-
-                        printer_com.StartPrintJob()
-                        printer_com.Print(1, False)
-                        printer_com.EndPrintJob()
-
-                        printer_label.SetField('Barcode', f'{row.emailAddress}')
-                        printer_label.SetField('Text', f'{row.emailAddress}')
-
-                        printer_com.StartPrintJob()
-                        printer_com.Print(1, False)
-                        printer_com.EndPrintJob()
-                print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Finished printing labels.')
-            else:
-                print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Printer Offline: {printer_com.GetCurrentPrinterName()}')
+            print_labels(values)
