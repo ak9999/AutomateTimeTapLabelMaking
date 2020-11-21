@@ -134,7 +134,7 @@ layout = [
 
 if __name__ == "__main__":
     # Create app window
-    window = sg.Window(title='Automatic Appointment Label Printer', layout=layout)
+    window = sg.Window(title='Automatic Appointment Label Printer', layout=layout, finalize=True)
     # Define timeout for app
     # Get TimeTap API key and secret from environment variables
     # Initialize TimeTap API Client

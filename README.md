@@ -20,6 +20,7 @@
     --- # API configuration for TimeTap
     key: <TIMETAP KEY GOES HERE>
     secret: <TIME TAP API PRIVATE KEY GOES HERE>
+    location: <TIMETAP LOCATION ID HERE>
     ```
     Needs to be saved in the same directory as `AutoTimeTapLabelMaker` executable.
 
