@@ -15,6 +15,7 @@ with open('config.yaml') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
     key = str(config['key'])
     secret = config['secret']
+    location = config['location']
 
 # Initialize Dymo Printer
 barcode_path = pathlib.Path('./Address Asset.label')
@@ -31,8 +32,12 @@ printer_label = Dispatch('Dymo.DymoLabels')
 class Appointment(namedtuple('Appointment', 'calendarId status subStatus emailAddress fullName dateOfBirth, printed')):
     @classmethod
     def convert_dateOfBirth(self, dateOfBirth: str) -> str:
-        _ = dateOfBirth.split('-')  # Split the date of birth.
-        return f'{_[1]}{_[-1]}{_[0][-2:]}'  # MMDDYY
+        try:
+            _ = dateOfBirth.split('-')  # Split the date of birth.
+            return f'{_[1]}{_[-1]}{_[0]}'  # MMDDYYYY
+        except Exception:
+            return dateOfBirth
+
 
     @classmethod
     def from_sqlite(cls, calendarId, status, subStatus, emailAddress, fullName, dateOfBirth, printed):
@@ -154,9 +159,11 @@ if __name__ == "__main__":
         # User clicked sync or 3 seconds without input passed.
         if event == 'Sync' or event == sg.TIMEOUT_KEY:
             # Get all appointments
-            appointments = client.get_appointments_report(statusList=['OPEN'], pageSize=99999)
+            appointments = client.get_appointments_report(statusList=['OPEN'], pageSize=100)
             print(f'[{datetime.now().strftime("%I:%M:%S %p")}] Checking TimeTap for latest appointments...')
             for a in appointments:
+                if a['location']['locationId'] != location:
+                    continue
                 cursor.execute(
                     "SELECT * FROM appointments WHERE calendarId = ?",
                     (a['calendarId'],)
