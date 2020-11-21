@@ -24,5 +24,4 @@ class TimeTapAuthentication(requests.auth.AuthBase):
 
     def __call__(self, request):
         request.headers['Authorization'] = self.authorization
-        print(request.headers)
         return request
