@@ -1,0 +1,6 @@
+.idea/
+env/
+config.yaml
+__pycache__
+appointments.db
+appointments.db-journal
