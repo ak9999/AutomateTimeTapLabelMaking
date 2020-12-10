@@ -141,10 +141,13 @@ if __name__ == "__main__":
     client = timetappy.Client(APIKey=key, PrivateKey=secret)
     # Open a database connection in memory
     conn = sqlite3.connect(':memory:', check_same_thread=False)
+    conn = sqlite3.connect('appointments.db', check_same_thread=False)
     # Assign row factory
     conn.row_factory = Appointment.appointment_factory
     # Open a cursor
     cursor = conn.cursor()
+    # Drop Appointments table if it exists
+    cursor.execute("DROP TABLE IF EXISTS appointments;")
     # Create table "Appointments"
     cursor.execute("CREATE TABLE appointments (calendarId INTEGER, status TEXT, subStatus TEXT, emailAddress TEXT, fullName TEXT, dateOfBirth TEXT, printed INTEGER)")
     event, values = window.read()
@@ -181,10 +184,6 @@ if __name__ == "__main__":
                         "INSERT INTO appointments VALUES (?, ?, ?, ?, ?, ?, ?)",
                         Appointment.from_dict(a)
                     )
-            # Delete unneeded appointments
-            if threading.active_count() < 3:  # Only if we don't already have a thread running.
-                thread = threading.Thread(target=cleanup_db, args=(client, conn), daemon=True)
-                thread.start()
             print_labels(values)
         if event == 'Print Labels':
             print_labels(values)
